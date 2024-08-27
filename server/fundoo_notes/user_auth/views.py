@@ -3,6 +3,16 @@ from rest_framework.response import Response
 from rest_framework import status
 from .serializers import UserRegistrationSerializer, UserLoginSerializer
 from rest_framework.exceptions import ValidationError
+from rest_framework_simplejwt.tokens import RefreshToken
+from django.conf import settings
+from django.core.mail import send_mail
+from rest_framework.reverse import reverse
+from .models import User
+import jwt
+from rest_framework.decorators import api_view, permission_classes
+from rest_framework.permissions import AllowAny
+from django.utils.html import format_html
+
 
 class RegisterUserView(APIView):
     """
@@ -37,10 +47,32 @@ class RegisterUserView(APIView):
             serializer = UserRegistrationSerializer(data=request.data)
             if serializer.is_valid():
                 user = serializer.save()
+                # generate a token
+                token = RefreshToken.for_user(user)
+                access_token = str(token.access_token)
+                link = request.build_absolute_uri(reverse('verify', args=[access_token]))
+                html_message = format_html(
+                    'Hi {},<br><br>'
+                    'Please verify your email by clicking on the link below:<br>'
+                    '<a href="{}">Verify Email</a><br><br>'
+                    'Thank you!',
+                    user.username,
+                    link
+                )
+
+                send_mail(
+                    'Verify your email',
+                    f'Use the following token to verify your email: {link}',
+                    settings.EMAIL_HOST_USER,
+                    [user.email],
+                    fail_silently=False,
+                    html_message=html_message
+                )
+
                 return Response({
                     'message': 'User registered successfully',
                     'status': 'success',
-                    'data': serializer.data
+                    'data':serializer.data
                 }, status=status.HTTP_201_CREATED)
             return Response({
                 'message': 'Invalid data',
@@ -112,3 +144,50 @@ class LoginUserView(APIView):
                 'status': 'error',
                 'error': str(e)
             }, status=status.HTTP_400_BAD_REQUEST)
+        
+@api_view(['GET'])
+@permission_classes([AllowAny])
+def verify_registered_user(request, token):
+    """
+    Verify the registered user using the token.
+
+    This view takes a JWT token as a path parameter, decodes it using the secret key, 
+    and returns the decoded token in the response.
+
+    Args:
+        request (Request): The HTTP request object.
+        token (str): The JWT token passed as a path parameter.
+
+    Returns:
+        Response: A DRF Response object with the decoded token or an error message.
+    """
+    try:
+        # Decode the token
+        payload=jwt.decode(token,settings.SECRET_KEY,algorithms=["HS256"])
+        user = User.objects.get(id=payload['user_id'])
+        user.is_verified = True
+        user.save()
+
+        
+        return Response({
+            'message':'valid token',
+            'status': 'success'
+        }, status=status.HTTP_200_OK)
+    except jwt.ExpiredSignatureError:
+        return Response({
+            'message': 'Token has expired',
+            'status': 'error'
+        }, status=status.HTTP_400_BAD_REQUEST)
+    except jwt.InvalidTokenError:
+        return Response({
+            'message': 'Invalid token',
+            'status': 'error'
+        }, status=status.HTTP_400_BAD_REQUEST)
+    except Exception as e:
+        return Response({
+            'message': 'An unexpected error occurred',
+            'status': 'error',
+            'error': str(e)
+        }, status=status.HTTP_400_BAD_REQUEST)
+
+

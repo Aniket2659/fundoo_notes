@@ -4,6 +4,7 @@ from django.contrib.auth import authenticate
 from rest_framework_simplejwt.tokens import RefreshToken
 import re
 
+
 User = get_user_model()
 
 class UserRegistrationSerializer(serializers.ModelSerializer):
@@ -21,6 +22,7 @@ class UserRegistrationSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
         fields = ['id', 'email', 'username', 'password', 'phone_number', 'is_verified']
+        extra_kwargs={"password": {"write_only": True}}
 
     def validate(self, attrs):
         """
@@ -78,7 +80,9 @@ class UserRegistrationSerializer(serializers.ModelSerializer):
             password=validated_data['password'],
             phone_number=validated_data.get('phone_number')
         )
+        
         return user
+
 
 
 class UserLoginSerializer(serializers.Serializer):

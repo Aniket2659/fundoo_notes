@@ -45,6 +45,9 @@ INSTALLED_APPS = [
     'user_auth',
     'rest_framework',
     'rest_framework_simplejwt',
+    'notes',
+
+
 ]
 
 from datetime import timedelta # import this library top of the settings.py file

@@ -14,6 +14,7 @@ import os
 from dotenv import load_dotenv
 load_dotenv()
 from pathlib import Path
+from loguru import logger
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
@@ -46,6 +47,7 @@ INSTALLED_APPS = [
     'rest_framework',
     'rest_framework_simplejwt',
     'notes',
+    'label',
 
 
 ]
@@ -162,5 +164,85 @@ EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
 EMAIL_HOST = 'sandbox.smtp.mailtrap.io'
 EMAIL_PORT = 2525
 EMAIL_USE_TLS = True
-EMAIL_HOST_USER ='1f8b9962b3fa4f'
-EMAIL_HOST_PASSWORD = 'ba36ae3b07f3ed'
+EMAIL_HOST_USER =os.getenv('your_email')
+EMAIL_HOST_PASSWORD =os.getenv('password')
+
+# Loguru settings for handlers
+LOG_DIR = BASE_DIR / 'logs'
+os.makedirs(LOG_DIR, exist_ok=True)
+
+LOGURU_SETTINGS = {
+    "handlers": [
+        {
+            "sink": LOG_DIR / "trace.log",
+            "level": "TRACE",
+            "format": "{time} - {level} - {message}",
+            "rotation": "10 MB",
+            "compression": "zip",
+            "serialize": False
+        },
+        {
+            "sink": LOG_DIR / "debug.log",
+            "level": "DEBUG",
+            "format": "{time} - {level} - {message}",
+            "rotation": "10 MB",
+            "compression": "zip",
+            "serialize": False
+        },
+        {
+            "sink": LOG_DIR / "info.log",
+            "level": "INFO",
+            "format": "{time} - {level} - {message}",
+            "rotation": "10 MB",
+            "compression": "zip",
+            "serialize": False
+        },
+        {
+            "sink": LOG_DIR / "success.log",
+            "level": "SUCCESS",
+            "format": "{time} - {level} - {message}",
+            "rotation": "10 MB",
+            "compression": "zip",
+            "serialize": False
+        },
+        {
+            "sink": LOG_DIR / "warning.log",
+            "level": "WARNING",
+            "format": "{time} - {level} - {message}",
+            "rotation": "10 MB",
+            "compression": "zip",
+            "serialize": False
+        },
+        {
+            "sink": LOG_DIR / "error.log",
+            "level": "ERROR",
+            "format": "{time} - {level} - {message}",
+            "rotation": "10 MB",
+            "compression": "zip",
+            "serialize": False
+        },
+        {
+            "sink": LOG_DIR / "critical.log",
+            "level": "CRITICAL",
+            "format": "{time} - {level} - {message}",
+            "rotation": "10 MB",
+            "compression": "zip",
+            "serialize": False
+        },
+    ],
+}
+
+# Apply the Loguru settings
+for handler in LOGURU_SETTINGS["handlers"]:
+    logger.add(**handler)
+
+
+CACHES = {
+    "default": {
+        "BACKEND": "django_redis.cache.RedisCache",
+        "LOCATION": "redis://127.0.0.1:6379/1",
+        "OPTIONS": {
+            "CLIENT_CLASS": "django_redis.client.DefaultClient",
+        }
+    }
+}

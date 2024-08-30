@@ -3,24 +3,29 @@ from .serializers import SerializerNote
 from rest_framework.decorators import action
 from rest_framework import viewsets,status
 from rest_framework.response import Response
-from rest_framework.exceptions import ValidationError
+from rest_framework.exceptions import ValidationError,NotFound
 from rest_framework.permissions import IsAuthenticated
 from rest_framework_simplejwt.authentication import JWTAuthentication
 from django.core.exceptions import ObjectDoesNotExist
 from django.db import DatabaseError
 from loguru import logger
+from utils.redis_utils import RedisUtils
+import json
 
 # Create your views here.
 
-class NotesViewSet(viewsets.ViewSet):
+class NotesViewSet(viewsets.ModelViewSet):
     """
     A ViewSet for managing notes for an authenticated user.
     """
     authentication_classes = [JWTAuthentication]
     permission_classes = [IsAuthenticated]
+    redis=RedisUtils()
+
 
     queryset=Note.objects.all()
     serializer_class=SerializerNote
+
     def create(self, request):
         """
         Create a new note for the user.
@@ -31,6 +36,16 @@ class NotesViewSet(viewsets.ViewSet):
             serializer = SerializerNote(data=request.data)
             serializer.is_valid(raise_exception=True)
             serializer.save(user=request.user)
+
+            cache_key = f"user_{request.user.id}"
+            notes_data = self.redis.get(cache_key)
+            if notes_data:
+                notes_data = json.loads(notes_data)
+            else:
+                notes_data = []
+
+            notes_data.append(serializer.data)
+            self.redis.save(cache_key, json.dumps(notes_data))
             return Response({
                     'message': 'successfully create',
                     'status': 'success',
@@ -54,12 +69,26 @@ class NotesViewSet(viewsets.ViewSet):
         Returns: Serialized list of notes or error message.
         """
         try:
-            queryset = Note.objects.filter(user=request.user)
-            serializer = SerializerNote(queryset, many=True)
+            cache_key = f"user_{request.user.id}"
+            notes_data = self.redis.get(cache_key)
+
+            if notes_data:
+                logger.info("Returning notes from cache.")
+                notes_data = json.loads(notes_data) 
+
+            else:
+                queryset = Note.objects.filter(user=request.user)
+                serializer = SerializerNote(queryset, many=True)
+                notes_data = serializer.data
+                logger.info(f"info {notes_data}")
+
+                notes_data_str = json.dumps(notes_data)
+                self.redis.save(cache_key, notes_data_str)
+
             return Response({
                     'message': 'successfully showin list of note id',
                     'status': 'success',
-                    'data':serializer.data})
+                    'data':notes_data})
         except Exception as e:
             logger.error(f"Unexpected error while fetching notes: {e}")
             return Response(
@@ -72,20 +101,42 @@ class NotesViewSet(viewsets.ViewSet):
             )
     def retrieve(self, request, pk=None):
         """
-        Retrieve a note by ID for the user.
-        Parameters: request (Request) - HTTP request, pk (int) - Note ID.
-        Returns: Serialized note data or error message.
+        desc: Retrieves a specific note for the authenticated user.
+        params:
+            request (Request): The HTTP request object.
+            pk (int): Primary key of the note.
+        return: Response: Serialized note data or error message.
         """
         try:
+            cache_key = f"user_{request.user.id}"
+            notes_data = self.redis.get(cache_key)
+
+            if notes_data:
+                notes_data = json.loads(notes_data) # type: ignore
+                note_data = next(
+                    (note for note in notes_data if note['id'] == int(pk)), None)  # type: ignore
+                if note_data:
+                    logger.info(f"Returning note {pk} from cache.")
+                    return Response({
+                        "message": "Note retrieved successfully",
+                        "status": "success",
+                        "data": note_data
+                    })
+                else:
+                    raise ObjectDoesNotExist
+
             note = Note.objects.get(pk=pk, user=request.user)
             serializer = SerializerNote(note)
-            return Response({
-                    'message': 'successfully retrieve by note id',
-                    'status': 'success',
-                    'data':serializer.data})
-        except Exception as e:
-            logger.error(f"Unexpected error while retrieve note: {e}")
+            note_data = serializer.data
 
+            self.redis.save(cache_key, json.dumps(note_data))
+            return Response({
+                "message": "Note retrieved successfully",
+                "status": "success",
+                "data": note_data
+            })
+        except Exception as e:
+            logger.error(f"Unexpected error while retrieving note: {e}")
             return Response(
                 {
                     'message': 'An unexpected error occurred',
@@ -94,7 +145,6 @@ class NotesViewSet(viewsets.ViewSet):
                 },
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
-
     def update(self, request, pk=None):
         """
         Update an existing note for the user.
@@ -105,7 +155,19 @@ class NotesViewSet(viewsets.ViewSet):
             note = Note.objects.get(pk=pk, user=request.user)
             serializer = SerializerNote(note, data=request.data)
             serializer.is_valid(raise_exception=True)
-            serializer.save()
+            note=serializer.save()
+
+            cache_key = f"user_{request.user.id}"
+            notes_data = self.redis.get(cache_key)
+            if notes_data:
+                notes_data = json.loads(notes_data) 
+                for idx, existing_note in enumerate(notes_data):
+                    if existing_note['id'] == int(pk):  
+                        notes_data[idx] = serializer.data
+                        break
+
+                self.redis.save(cache_key, json.dumps(notes_data))
+
             return Response({
                     'message': 'successfully updated',
                     'status': 'success',
@@ -131,6 +193,15 @@ class NotesViewSet(viewsets.ViewSet):
         try:
             note = Note.objects.get(pk=pk, user=request.user)
             note.delete()
+            cache_key = f"user_{request.user.id}"
+            notes_data = self.redis.get(cache_key)
+            if notes_data:
+                notes_data = json.loads(notes_data) 
+                notes_data = [
+                    note for note in notes_data if note['id'] != int(pk)]
+
+                self.redis.save(cache_key, json.dumps(notes_data))
+
             return Response({
                     'message': 'successfully deleted',
                     'status': 'success',
@@ -146,168 +217,149 @@ class NotesViewSet(viewsets.ViewSet):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
     @action(detail=True, methods=['patch'])
-    def is_archive(self, request, pk=None):
-        """
-        desc: Toggles the archive status of a specific note.
-        params:
-            request (Request): The HTTP request object.
-            pk (int): Primary key of the note.
-        return: Response: Updated note data or error message.
-        """
+    def toggle_archive(self, request, pk=None):
         try:
-            note = Note.objects.get(pk=pk, user=request.user)
+            note = self.get_object()
+
             note.is_archive = not note.is_archive
             note.save()
-            serializer = SerializerNote(note)
-            return Response({
-                    'message': 'successfully toggele ',
-                    'status': 'success',
-                    'data':serializer.data})
-        except ObjectDoesNotExist:
-            return Response(
-                {
-                    'message': 'Note not found',
-                    'status': 'error',
-                    'errors': 'The requested note does not exist.'
-                },
-                status=status.HTTP_404_NOT_FOUND
-            )
-        except DatabaseError as e:
-            logger.error(f"Database error while toggling archive status: {e}")
-            return Response(
-                {
-                    'message': 'Failed to toggle archive status',
-                    'status': 'error',
-                    'errors': str(e)
-                },
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
-        except Exception as e:
-            logger.error(f"Unexpected error while toggling archive status: {e}")
-            return Response(
-                {
-                    'message': 'An unexpected error occurred',
-                    'status': 'error',
-                    'errors': str(e)
-                },
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
 
+            cache_key = f"user_{request.user.id}"
+            notes_data = self.redis.get(cache_key)
+            print(f"cashed toggle:{notes_data}")
+
+            if notes_data:
+                for cached_note in notes_data:
+                    if cached_note['id'] == note.id:
+                        cached_note['is_archive'] = note.is_archive
+                        print("cache updated toggle archive")
+                        break
+                self.redis.save(cache_key, notes_data, expiry=3600)
+
+            return Response({
+                'user': request.user.email,
+                'message': 'Note archive status toggled successfully.',
+                'data': SerializerNote(note).data
+            }, status=status.HTTP_200_OK)
+        except NotFound:
+            logger.error(f"Note with ID {pk} not found for user {request.user.email}.")
+            return Response({
+                'user': request.user.email,
+                'error': 'Note not found.',
+                'detail': 'The note with the provided ID does not exist.'
+            }, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            logger.error(f"An error occurred while toggling archive status for note with ID {pk} for user {request.user.email}: {str(e)}")
+            return Response({
+                'user': request.user.email,
+                'error': 'An error occurred while toggling the archive status.',
+                'detail': str(e)
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
     @action(detail=False, methods=['get'])
-    def archived(self, request):
-        """
-        desc: Fetches all archived notes for the authenticated user.
-        params: request (Request): The HTTP request object.
-        return: Response: Serialized list of archived notes or error message.
-        """
+    def archived_notes(self, request):
         try:
-            queryset = Note.objects.filter(user=request.user, is_archive=True)
-            serializer = SerializerNote(queryset, many=True)
-            return Response({
-                    'message': 'successfully retrieve',
-                    'status': 'success',
-                    'data':serializer.data})
-        except DatabaseError as e:
-            logger.error(f"Database error while fetching archived notes: {e}")
-            return Response(
-                {
-                    'message': 'Failed to fetch archived notes',
-                    'status': 'error',
-                    'errors': str(e)
-                },
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
-        except Exception as e:
-            logger.error(f"Unexpected error while toggling archive status: {e}")
-            return Response(
-                {
-                    'message': 'An unexpected error occurred',
-                    'status': 'error',
-                    'errors': str(e)
-                },
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
+            cache_key = f"user_{request.user.id}"
+            notes_data = self.redis.get(cache_key)
+            print(f"Archived Notes:{notes_data}")
 
+            if notes_data:
+                archived_notes = [note for note in notes_data if note.get('is_archive', False)]
+                print(f"aechived notes:{archived_notes}")
+                return Response({
+                    'user': request.user.email,
+                    'message': 'Archived notes retrieved successfully from cache.',
+                    'data': archived_notes
+                }, status=status.HTTP_200_OK)
+            
+            queryset = Note.objects.filter(user=request.user, is_archive=True)
+            serializer = self.get_serializer(queryset, many=True)
+            self.redis.save(cache_key, serializer.data, expiry=3600)
+            
+            return Response({
+                'user': request.user.email,
+                'message': 'Archived notes retrieved successfully.',
+                'data': serializer.data
+            }, status=status.HTTP_200_OK)
+        except Exception as e:
+            logger.error(f"An error occurred while retrieving archived notes for user {request.user.email}: {str(e)}")
+            return Response({
+                'user': request.user.email,
+                'error': 'An error occurred while retrieving archived notes.',
+                'detail': str(e)
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
     @action(detail=True, methods=['patch'])
-    def is_trash(self, request, pk=None):
-        """
-        desc: Toggles the trash status of a specific note.
-        params:
-            request (Request): The HTTP request object.
-            pk (int): Primary key of the note.
-        return: Response: Updated note data or error message.
-        """
+    def toggle_trash(self, request, pk=None):
         try:
-            note = Note.objects.get(pk=pk, user=request.user)
+            note = self.get_object()
             note.is_trash = not note.is_trash
             note.save()
-            serializer = SerializerNote(note)
+
+            cache_key = f"user_{request.user.id}"
+            notes_data = self.redis.get(cache_key)
+
+            if notes_data:
+                updated_note_data = SerializerNote(note).data
+                updated_notes = [
+                    updated_note_data if n['id'] == note.id else n
+                    for n in notes_data
+                ]
+                self.redis.save(cache_key, updated_notes, expiry=3600)
+                print("Toggle trash")
+            else:
+                queryset = self.get_queryset().filter(is_archive=False, is_trash=False)
+                self.redis.save(cache_key, self.get_serializer(queryset, many=True).data, expiry=300)
+
             return Response({
-                    'message': 'successfully updated',
-                    'status': 'success',
-                    'data':serializer.data})
-        except ObjectDoesNotExist:
-            return Response(
-                {
-                    'message': 'Note not found',
-                    'status': 'error',
-                    'errors': 'The requested note does not exist.'
-                },
-                status=status.HTTP_404_NOT_FOUND
-            )
-        except DatabaseError as e:
-            logger.error(f"Database error while fetching trashed notes: {e}")
-
-            return Response(
-                {
-                    'message': 'Failed to toggle trash status',
-                    'status': 'error',
-                    'errors': str(e)
-                },
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
+                'user': request.user.email,
+                'message': 'Note trash status toggled successfully.',
+                'data': SerializerNote(note).data
+            }, status=status.HTTP_200_OK)
+        except NotFound:
+            logger.error(f"Note with ID {pk} not found for user {request.user.email}.")
+            return Response({
+                'user': request.user.email,
+                'error': 'Note not found.',
+                'detail': 'The note with the provided ID does not exist.'
+            }, status=status.HTTP_404_NOT_FOUND)
         except Exception as e:
-            logger.error(f"Unexpected error while toggling trashed status: {e}")
-            return Response(
-                {
-                    'message': 'An unexpected error occurred',
-                    'status': 'error',
-                    'errors': str(e)
-                },
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
-
+            logger.error(f"An error occurred while toggling trash status for note with ID {pk} for user {request.user.email}: {str(e)}")
+            return Response({
+                'user': request.user.email,
+                'error': 'An error occurred while toggling the trash status.',
+                'detail': str(e)
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
     @action(detail=False, methods=['get'])
-    def trashed(self, request):
-        """
-        desc: Fetches all trashed notes for the authenticated user.
-        params: request (Request): The HTTP request object.
-        return: Response: Serialized list of trashed notes or error message.
-        """
+    def trashed_notes(self, request):
         try:
-            queryset = Note.objects.filter(user=request.user, is_trash=True)
-            serializer = SerializerNote(queryset, many=True)
+            cache_key = f"user_{request.user.id}"
+            notes_data = self.redis.get(cache_key)
+
+            if notes_data:
+                
+                trashed_notes = [note for note in notes_data if note.get('is_trash', False)]
+                return Response({
+                    'user': request.user.email,
+                    'message': 'Trashed notes retrieved successfully from cache.',
+                    'data': trashed_notes
+                }, status=status.HTTP_200_OK)
+            
+            queryset = self.get_queryset().filter(is_trash=True)
+            serializer = self.get_serializer(queryset, many=True)
+
+            self.redis.save(cache_key, serializer.data, expiry=3600)
             return Response({
-                    'message': 'successfully showing',
-                    'status': 'success',
-                    'data':serializer.data})
-        except DatabaseError as e:
-            logger.error(f"Database error while fetching trashed notes: {e}")
-            return Response(
-                {
-                    'message': 'Failed to fetch trashed notes',
-                    'status': 'error',
-                    'errors': str(e)
-                },
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
+                'user': request.user.email,
+                'message': 'Trashed notes retrieved successfully.',
+                'data': serializer.data
+            }, status=status.HTTP_200_OK)
         except Exception as e:
-            logger.error(f"Unexpected error while toggling trashed status: {e}")
-            return Response(
-                {
-                    'message': 'An unexpected error occurred',
-                    'status': 'error',
-                    'errors': str(e)
-                },
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
+            logger.error(f"An error occurred while retrieving trashed notes for user {request.user.email}: {str(e)}")
+            return Response({
+                'user': request.user.email,
+                'error': 'An error occurred while retrieving trashed notes.',
+                'detail': str(e)
+            }, status=status.HTTP_400_BAD_REQUEST)
+    

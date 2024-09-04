@@ -52,12 +52,12 @@ class LabelViewSet(mixins.CreateModelMixin,
         try:
             data = request.data.copy()
             data['user'] = request.user.id
-            logger.info(f"Request Data: {data}")
+            logger.info(f"Request Data: {data}")                                                              
             serializer = self.get_serializer(data=data)
             serializer.is_valid(raise_exception=True)
             self.perform_create(serializer)
             headers = self.get_success_headers(serializer.data)
-            return Response({
+            return Response({                                                                                                                
                 'message': 'Label created successfully',
                 'status': 'success',
                 'data': serializer.data

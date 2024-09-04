@@ -11,8 +11,8 @@ from .models import User
 import jwt
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import AllowAny
+from .tasks import send_verification_email
 from django.utils.html import format_html
-
 
 class RegisterUserView(APIView):
     """
@@ -50,24 +50,9 @@ class RegisterUserView(APIView):
                 # generate a token
                 token = RefreshToken.for_user(user)
                 access_token = str(token.access_token)
-                link = request.build_absolute_uri(reverse('verify', args=[access_token]))
-                html_message = format_html(
-                    'Hi {},<br><br>'
-                    'Please verify your email by clicking on the link below:<br>'
-                    '<a href="{}">Verify Email</a><br><br>'
-                    'Thank you!',
-                    user.username,
-                    link
-                )
-
-                send_mail(
-                    'Verify your email',
-                    f'Use the following token to verify your email: {link}',
-                    settings.EMAIL_HOST_USER,
-                    [user.email],
-                    fail_silently=False,
-                    html_message=html_message
-                )
+                verification_link = request.build_absolute_uri(reverse('verify', args=[access_token]))
+                # send verification link asynchronously
+                send_verification_email.delay(user.email,verification_link)
 
                 return Response({
                     'message': 'User registered successfully',

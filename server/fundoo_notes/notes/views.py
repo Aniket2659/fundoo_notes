@@ -11,6 +11,8 @@ from django.db import DatabaseError
 from loguru import logger
 from utils.redis_utils import RedisUtils
 import json
+from .utils import schedule_reminder
+from .models import Note
 
 # Create your views here.
 
@@ -35,7 +37,11 @@ class NotesViewSet(viewsets.ModelViewSet):
         try:
             serializer = SerializerNote(data=request.data)
             serializer.is_valid(raise_exception=True)
-            serializer.save(user=request.user)
+            note=serializer.save(user=request.user)
+            # Schedule the task if reminder is set
+            if note.reminder: 
+                schedule_reminder(note) 
+
 
             cache_key = f"user_{request.user.id}"
             notes_data = self.redis.get(cache_key)
@@ -156,6 +162,10 @@ class NotesViewSet(viewsets.ModelViewSet):
             serializer = SerializerNote(note, data=request.data)
             serializer.is_valid(raise_exception=True)
             note=serializer.save()
+
+            if note.reminder:
+                schedule_reminder(note)
+
 
             cache_key = f"user_{request.user.id}"
             notes_data = self.redis.get(cache_key)

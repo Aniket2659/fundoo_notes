@@ -48,6 +48,7 @@ INSTALLED_APPS = [
     'rest_framework_simplejwt',
     'notes',
     'label',
+    'django_celery_beat',
 
 
 ]
@@ -164,8 +165,8 @@ EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
 EMAIL_HOST = 'sandbox.smtp.mailtrap.io'
 EMAIL_PORT = 2525
 EMAIL_USE_TLS = True
-EMAIL_HOST_USER =os.getenv('your_email')
-EMAIL_HOST_PASSWORD =os.getenv('password')
+EMAIL_HOST_USER ='1f8b9962b3fa4f'
+EMAIL_HOST_PASSWORD ='ba36ae3b07f3ed'
 
 # Loguru settings for handlers
 LOG_DIR = BASE_DIR / 'logs'
@@ -246,3 +247,14 @@ CACHES = {
         }
     }
 }
+
+CELERY_BROKER_URL ='redis://127.0.0.1:6379/0'
+CELERY_RESULT_BACKEND ='redis://127.0.0.1:6379/0'
+CELERY_ACCEPT_CONTENT = ['json']
+CELERY_TASK_SERIALIZER ='json'
+CELERY_RESULT_SERIALIZER ='json'
+CELERY_TIMEZONE = 'Asia/Kolkata'
+CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP = True
+CELERY_BEAT_SCHEDULER = 'django_celery_beat.schedulers:DatabaseScheduler'
+
+                                       

@@ -13,6 +13,7 @@ from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import AllowAny
 from .tasks import send_verification_email
 from django.utils.html import format_html
+from drf_yasg.utils import swagger_auto_schema
 
 class RegisterUserView(APIView):
     """
@@ -28,7 +29,7 @@ class RegisterUserView(APIView):
 
     permission_classes = ()
     authentication_classes = ()
-
+    @swagger_auto_schema(operation_description="register user", request_body=UserRegistrationSerializer, responses={200: UserRegistrationSerializer})
     def post(self, request):
         """
         Handle POST requests for user registration.
@@ -92,7 +93,8 @@ class LoginUserView(APIView):
 
     permission_classes = ()
     authentication_classes = ()
-
+    @swagger_auto_schema(operation_description="user login", request_body=UserLoginSerializer, responses={201: UserLoginSerializer, 400: "Bad Request: Invalid input data.",
+                                                                                                         500: "Internal Server Error: An error occurred during Login."})
     def post(self, request):
         """
         Handle POST requests for user login.

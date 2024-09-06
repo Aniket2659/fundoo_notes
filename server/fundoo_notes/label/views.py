@@ -8,6 +8,7 @@ from loguru import logger
 
 from .models import Label
 from .serializers import LabelSerializer
+from drf_yasg.utils import swagger_auto_schema
 
 class LabelViewSet(mixins.CreateModelMixin,
                    mixins.RetrieveModelMixin,
@@ -38,7 +39,9 @@ class LabelViewSet(mixins.CreateModelMixin,
             QuerySet: Filtered queryset of labels.
         """
         return self.queryset.filter(user=self.request.user)
-
+    
+    @swagger_auto_schema(operation_description="Creation of label", request_body=LabelSerializer, responses={201: LabelSerializer, 400: "Bad Request: Invalid input data.",
+                                                                                                             500: "Internal Server Error: An error occurred during creating label."})
     def create(self, request, *args, **kwargs):
         """
         Creates a new label for the authenticated user.
@@ -117,7 +120,8 @@ class LabelViewSet(mixins.CreateModelMixin,
                 'status': 'error',
                 'errors': str(e)
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
+    @swagger_auto_schema(operation_description="Updation of label", request_body=LabelSerializer, responses={201: LabelSerializer, 400: "Bad Request: Invalid input data.",
+                                                                                                             500: "Internal Server Error: An error occurred during updating label."})
     def update(self, request, *args, **kwargs):
         """
         Updates a specific label for the authenticated user.
@@ -169,7 +173,8 @@ class LabelViewSet(mixins.CreateModelMixin,
                 'status': 'error',
                 'errors': str(e)
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
+    @swagger_auto_schema(operation_description="Deletion of label", request_body=LabelSerializer, responses={201: LabelSerializer, 400: "Bad Request: Invalid input data.",
+                                                                                                             500: "Internal Server Error: An error occurred during deleting label."})
     def destroy(self, request, *args, **kwargs):
         """
         Deletes a specific label for the authenticated user.

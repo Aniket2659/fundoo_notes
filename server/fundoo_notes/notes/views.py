@@ -13,6 +13,7 @@ from utils.redis_utils import RedisUtils
 import json
 from .utils import schedule_reminder
 from .models import Note
+from drf_yasg.utils import swagger_auto_schema
 
 # Create your views here.
 
@@ -27,7 +28,8 @@ class NotesViewSet(viewsets.ModelViewSet):
 
     queryset=Note.objects.all()
     serializer_class=SerializerNote
-
+    @swagger_auto_schema(operation_description="Creation of note", request_body=SerializerNote, 
+                         responses={201: SerializerNote, 400: "Bad Request: Invalid input data.", 500: "Internal Server Error: An error occurred during Creating note."})
     def create(self, request):
         """
         Create a new note for the user.
@@ -151,6 +153,8 @@ class NotesViewSet(viewsets.ModelViewSet):
                 },
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+    @swagger_auto_schema(operation_description="Updation of note", request_body=SerializerNote, responses={201: SerializerNote, 400: "Bad Request: Invalid input data.",
+                                                                                                           500: "Internal Server Error: An error occurred during updating note."})
     def update(self, request, pk=None):
         """
         Update an existing note for the user.
@@ -193,6 +197,8 @@ class NotesViewSet(viewsets.ModelViewSet):
                 },
                 status=status.HTTP_400_BAD_REQUEST
             )
+    @swagger_auto_schema(operation_description="Deletion of note", request_body=SerializerNote, responses={201: SerializerNote, 400: "Bad Request: Invalid input data.",
+                                                                                                           500: "Internal Server Error: An error occurred during deleting note."})
 
     def destroy(self, request, pk=None):
         """
@@ -226,6 +232,9 @@ class NotesViewSet(viewsets.ModelViewSet):
                 },
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+    @swagger_auto_schema(operation_description=" toggle Archive ", request_body=SerializerNote, responses={201: SerializerNote, 400: "Bad Request: Invalid input data.",
+                                                                                                       500: "Internal Server Error: An error occurred during archive note."})
+
     @action(detail=True, methods=['patch'])
     def toggle_archive(self, request, pk=None):
         try:
@@ -265,7 +274,8 @@ class NotesViewSet(viewsets.ModelViewSet):
                 'error': 'An error occurred while toggling the archive status.',
                 'detail': str(e)
             }, status=status.HTTP_400_BAD_REQUEST)
-        
+
+
     @action(detail=False, methods=['get'])
     def archived_notes(self, request):
         try:
@@ -299,6 +309,10 @@ class NotesViewSet(viewsets.ModelViewSet):
                 'detail': str(e)
             }, status=status.HTTP_400_BAD_REQUEST)
         
+
+    @swagger_auto_schema(operation_description=" toggle trash ", request_body=SerializerNote, responses={201: SerializerNote, 400: "Bad Request: Invalid input data.",
+                                                                                                       500: "Internal Server Error: An error occurred during trashed note."})
+
     @action(detail=True, methods=['patch'])
     def toggle_trash(self, request, pk=None):
         try:

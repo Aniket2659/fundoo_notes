@@ -11,9 +11,13 @@ from django.db import DatabaseError
 from loguru import logger
 from utils.redis_utils import RedisUtils
 import json
+from user_auth.models import User
 from .utils import schedule_reminder
-from .models import Note
+from .models import Note,Collaborator
 from drf_yasg.utils import swagger_auto_schema
+from drf_yasg import openapi
+from django.db.models import Q
+from label.models import Label
 
 # Create your views here.
 
@@ -43,17 +47,7 @@ class NotesViewSet(viewsets.ModelViewSet):
             # Schedule the task if reminder is set
             if note.reminder: 
                 schedule_reminder(note) 
-
-
-            cache_key = f"user_{request.user.id}"
-            notes_data = self.redis.get(cache_key)
-            if notes_data:
-                notes_data = json.loads(notes_data)
-            else:
-                notes_data = []
-
-            notes_data.append(serializer.data)
-            self.redis.save(cache_key, json.dumps(notes_data))
+            self.redis.delete(f"user_{request.user.id}")
             return Response({
                     'message': 'successfully create',
                     'status': 'success',
@@ -85,7 +79,11 @@ class NotesViewSet(viewsets.ModelViewSet):
                 notes_data = json.loads(notes_data) 
 
             else:
-                queryset = Note.objects.filter(user=request.user)
+                queryset = Note.objects.filter(
+                    Q(user=request.user) | Q(collaborator__user=request.user),
+                    is_archive=False,
+                    is_trash=False
+                ).distinct() 
                 serializer = SerializerNote(queryset, many=True)
                 notes_data = serializer.data
                 logger.info(f"info {notes_data}")
@@ -120,7 +118,7 @@ class NotesViewSet(viewsets.ModelViewSet):
             notes_data = self.redis.get(cache_key)
 
             if notes_data:
-                notes_data = json.loads(notes_data) # type: ignore
+                notes_data = json.loads(notes_data)
                 note_data = next(
                     (note for note in notes_data if note['id'] == int(pk)), None)  # type: ignore
                 if note_data:
@@ -133,7 +131,9 @@ class NotesViewSet(viewsets.ModelViewSet):
                 else:
                     raise ObjectDoesNotExist
 
-            note = Note.objects.get(pk=pk, user=request.user)
+            note = Note.objects.get(
+                Q(pk=pk) & (Q(user=request.user) | Q(collaborator__user=request.user))
+            )
             serializer = SerializerNote(note)
             note_data = serializer.data
 
@@ -162,7 +162,9 @@ class NotesViewSet(viewsets.ModelViewSet):
         Returns: Serialized updated note data or error message.
         """
         try:
-            note = Note.objects.get(pk=pk, user=request.user)
+            note = Note.objects.get(
+                Q(pk=pk) & (Q(user=request.user) | Q(collaborator__user=request.user))
+            )
             serializer = SerializerNote(note, data=request.data)
             serializer.is_valid(raise_exception=True)
             note=serializer.save()
@@ -170,17 +172,7 @@ class NotesViewSet(viewsets.ModelViewSet):
             if note.reminder:
                 schedule_reminder(note)
 
-
-            cache_key = f"user_{request.user.id}"
-            notes_data = self.redis.get(cache_key)
-            if notes_data:
-                notes_data = json.loads(notes_data) 
-                for idx, existing_note in enumerate(notes_data):
-                    if existing_note['id'] == int(pk):  
-                        notes_data[idx] = serializer.data
-                        break
-
-                self.redis.save(cache_key, json.dumps(notes_data))
+            self.redis.delete(f"user_{request.user.id}")
 
             return Response({
                     'message': 'successfully updated',
@@ -207,16 +199,11 @@ class NotesViewSet(viewsets.ModelViewSet):
         Returns: Status 204 if successful, error message otherwise.
         """
         try:
-            note = Note.objects.get(pk=pk, user=request.user)
+            note = Note.objects.get(
+                Q(pk=pk) & (Q(user=request.user) | Q(collaborator__user=request.user))
+            )
             note.delete()
-            cache_key = f"user_{request.user.id}"
-            notes_data = self.redis.get(cache_key)
-            if notes_data:
-                notes_data = json.loads(notes_data) 
-                notes_data = [
-                    note for note in notes_data if note['id'] != int(pk)]
-
-                self.redis.save(cache_key, json.dumps(notes_data))
+            self.redis.delete(f"user_{request.user.id}")
 
             return Response({
                     'message': 'successfully deleted',
@@ -386,4 +373,221 @@ class NotesViewSet(viewsets.ModelViewSet):
                 'error': 'An error occurred while retrieving trashed notes.',
                 'detail': str(e)
             }, status=status.HTTP_400_BAD_REQUEST)
-    
+
+    @swagger_auto_schema(
+        operation_description="Add collaborators to a note",
+        request_body=openapi.Schema(
+            type=openapi.TYPE_OBJECT,
+            properties={
+                'note_id': openapi.Schema(type=openapi.TYPE_INTEGER),
+                'user_ids': openapi.Schema(type=openapi.TYPE_ARRAY, items=openapi.Items(type=openapi.TYPE_INTEGER))
+            }
+        ),
+        responses={
+            200: "Collaborators added successfully",
+            400: "Bad Request: Invalid input data.",
+            404: "Not Found: Note not found.",
+            500: "Internal Server Error: An error occurred during adding collaborators."
+        }
+    )
+    @action(detail=False, methods=['post'])
+    def add_collaborators(self, request):
+        try:
+            self.redis.delete(f"user_{request.user.id}")
+            note_id = request.data.get('note_id')
+            user_ids = request.data.get('user_ids', [])
+
+            if not isinstance(user_ids, list):
+                return Response(
+                    {'message': 'Invalid data format for user_ids', 'status': 'error'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            note = Note.objects.get(pk=note_id, user=request.user)
+            if request.user.id in user_ids:
+                return Response(
+                    {'message': 'Owner cannot be added as a collaborator', 'status': 'error'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            users = User.objects.filter(pk__in=user_ids)
+            valid_user_ids = {user.id for user in users}
+
+            # Create a list of Collaborator objects to be created
+            collaborators = [
+                Collaborator(note=note, user=user, access_type=Collaborator.READ_WRITE)
+                for user in users
+            ]
+
+            Collaborator.objects.bulk_create(collaborators, ignore_conflicts=True)
+
+            invalid_user_ids = set(user_ids) - valid_user_ids
+            if invalid_user_ids:
+                return Response(
+                    {'message': f"Collaborators added successfully, but the following user_ids were not found: {list(invalid_user_ids)}", 
+                     'status': 'partial_success'},
+                    status=status.HTTP_200_OK
+                )
+
+            return Response(
+                {'message': 'Collaborators added successfully', 
+                'status': 'success'},
+                status=status.HTTP_200_OK
+            )
+
+        except Note.DoesNotExist:
+            return Response(
+                {'message': 'Note not found', 
+                'status': 'error',
+                'errors': 'The requested note does not exist.'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        except Exception as e:
+            logger.error(f"Unexpected error while adding collaborators: {e}")
+            return Response(
+                {'message': 'An unexpected error occurred', 
+                'status': 'error',
+                'errors': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+        
+    @swagger_auto_schema(
+    operation_description="remove collaborator of the note API endpoint",
+    request_body=openapi.Schema(
+        type=openapi.TYPE_OBJECT,
+        required=['note_id', 'user_id'],
+        properties={
+            'note_id': openapi.Schema(type=openapi.TYPE_INTEGER, description='ID of the note'),
+            'user_id': openapi.Schema(type=openapi.TYPE_ARRAY, items=openapi.Items(type=openapi.TYPE_INTEGER), description='List of user IDs to add'),
+        }
+    ),
+    responses={
+        200: 'Collaborator Remove successfully',
+        403: 'You are not the owner of this note',
+        404: 'One or more labels not found',
+        400: 'Invalid input',
+    }
+)       
+    @action(detail=False, methods=['post'])  
+    def remove_collaborator(self,request):
+        note_id = request.data.get('note_id')
+        user_ids = request.data.get('user_id',[])
+        
+        note = Note.objects.filter(id=note_id).first()
+        if not note:
+            return Response({"error": "Note not found"}, status=status.HTTP_404_NOT_FOUND)
+        
+        Collaborator.objects.filter(note_id=note_id,user_id__in=user_ids).delete()
+        
+        return Response({"message":"Collaborator removed Successsfully",
+                         "status":"success"}, status=status.HTTP_204_NO_CONTENT)
+
+    @swagger_auto_schema(
+        method='post',
+        operation_description="Add labels to a note",
+        request_body=openapi.Schema(
+            type=openapi.TYPE_OBJECT,
+            properties={
+                'note_id': openapi.Schema(type=openapi.TYPE_INTEGER),
+                'label_ids': openapi.Schema(type=openapi.TYPE_ARRAY, items=openapi.Items(type=openapi.TYPE_INTEGER))
+            }
+        ),
+        responses={
+            200: "Labels added successfully",
+            400: "Bad Request: Invalid input data.",
+            404: "Not Found: Note or labels not found.",
+            500: "Internal Server Error: An error occurred during adding labels."
+        }
+    )
+    @action(detail=False, methods=['post'])
+    def add_labels(self, request):
+
+        self.redis.delete(f"user_{request.user.id}")
+        note_id = request.data.get('note_id')
+        label_ids = request.data.get('label_ids', [])
+
+        if not note_id or not isinstance(label_ids, list):
+            return Response(
+                {'message': 'Invalid input data', 'status': 'error'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        try:
+            note = Note.objects.get(pk=note_id, user=request.user)
+            labels = Label.objects.filter(id__in=label_ids)
+            note.labels.add(*labels)
+            return Response(
+                {'message': 'Labels added successfully',
+                'status': 'success'},
+                status=status.HTTP_200_OK
+            )
+
+        except Note.DoesNotExist:
+            return Response(
+                {'message': 'Note not found',
+                'status': 'error', 
+                'errors': 'The requested note does not exist.'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        except Exception as e:
+            logger.error(f"Unexpected error while adding labels: {e}")
+            return Response(
+                {'message': 'An unexpected error occurred',
+                 'status': 'error', 
+                 'errors': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+    @swagger_auto_schema(
+        method='post',
+        operation_description="Remove labels from a note",
+        request_body=openapi.Schema(
+            type=openapi.TYPE_OBJECT,
+            properties={
+                'note_id': openapi.Schema(type=openapi.TYPE_INTEGER),
+                'label_ids': openapi.Schema(type=openapi.TYPE_ARRAY, items=openapi.Items(type=openapi.TYPE_INTEGER))
+            }
+        ),
+        responses={
+            200: "Labels removed successfully",
+            400: "Bad Request: Invalid input data.",
+            404: "Not Found: Note or labels not found.",
+            500: "Internal Server Error: An error occurred during removing labels."
+        }
+    )
+    @action(detail=False, methods=['post'])
+    def remove_labels(self, request):
+        note_id = request.data.get('note_id')
+        label_ids = request.data.get('label_ids', [])
+
+        if not note_id or not isinstance(label_ids, list):
+            return Response(
+                {'message': 'Invalid input data', 'status': 'error'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        try:
+            note = Note.objects.get(pk=note_id, user=request.user)
+            labels = Label.objects.filter(id__in=label_ids)
+            note.labels.remove(*labels)
+            return Response(
+                {'message': 'Labels removed successfully', 
+                 'status': 'success'},
+                status=status.HTTP_200_OK
+            )
+
+        except Note.DoesNotExist:
+            return Response(
+                {'message': 'Note not found', 
+                 'status': 'error', 
+                 'errors': 'The requested note does not exist.'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        except Exception as e:
+            logger.error(f"Unexpected error while removing labels: {e}")
+            return Response(
+                {'message': 'An unexpected error occurred', 
+                 'status': 'error', 
+                 'errors': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )

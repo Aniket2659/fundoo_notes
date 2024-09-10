@@ -15,6 +15,7 @@ from .tasks import send_verification_email
 from django.utils.html import format_html
 from drf_yasg.utils import swagger_auto_schema
 
+
 class RegisterUserView(APIView):
     """
     API view for registering a new user.
@@ -177,4 +178,8 @@ def verify_registered_user(request, token):
             'error': str(e)
         }, status=status.HTTP_400_BAD_REQUEST)
 
+#middleware testing
+from django.http import JsonResponse
 
+def test_view(request):
+    return JsonResponse({"message": "Hello, World!"})

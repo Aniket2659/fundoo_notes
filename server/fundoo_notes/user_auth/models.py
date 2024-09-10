@@ -33,5 +33,15 @@ class User(AbstractUser):
         return self.email
 
 
-    # class Meta:
-    #     db_table = "user"
+
+class Log(models.Model):
+    method = models.CharField(max_length=20, null=False)
+    url = models.TextField(null=False)
+    count = models.IntegerField(default=1)
+
+    class Meta:
+        db_table='log'
+
+    def __str__(self):
+        return f"{self.method} {self.url} - {self.count}"
+

@@ -47,7 +47,16 @@ class NotesViewSet(viewsets.ModelViewSet):
             # Schedule the task if reminder is set
             if note.reminder: 
                 schedule_reminder(note) 
-            self.redis.delete(f"user_{request.user.id}")
+            
+            cache_key = f"user_{request.user.id}"
+            notes_data = self.redis.get(cache_key)
+            if notes_data:
+                notes_data = json.loads(notes_data)
+            else:
+                notes_data = []
+
+            notes_data.append(serializer.data)
+            self.redis.save(cache_key, json.dumps(notes_data))
             return Response({
                     'message': 'successfully create',
                     'status': 'success',
@@ -162,9 +171,11 @@ class NotesViewSet(viewsets.ModelViewSet):
         Returns: Serialized updated note data or error message.
         """
         try:
-            note = Note.objects.get(
-                Q(pk=pk) & (Q(user=request.user) | Q(collaborator__user=request.user))
-            )
+            note = Note.objects.filter(
+                Q(pk=pk) & 
+                (Q(user=request.user) | Q(collaborators_relation__user=request.user , collaborators_relation__access_type=Collaborator.READ_WRITE))
+            ).distinct().first()
+
             serializer = SerializerNote(note, data=request.data)
             serializer.is_valid(raise_exception=True)
             note=serializer.save()
@@ -172,7 +183,16 @@ class NotesViewSet(viewsets.ModelViewSet):
             if note.reminder:
                 schedule_reminder(note)
 
-            self.redis.delete(f"user_{request.user.id}")
+            cache_key = f"user_{request.user.id}"
+            notes_data = self.redis.get(cache_key)
+            if notes_data:
+                notes_data = json.loads(notes_data) 
+                for idx, existing_note in enumerate(notes_data):
+                    if existing_note['id'] == int(pk):  
+                        notes_data[idx] = serializer.data
+                        break
+
+                self.redis.save(cache_key, json.dumps(notes_data))
 
             return Response({
                     'message': 'successfully updated',
@@ -203,7 +223,14 @@ class NotesViewSet(viewsets.ModelViewSet):
                 Q(pk=pk) & (Q(user=request.user) | Q(collaborator__user=request.user))
             )
             note.delete()
-            self.redis.delete(f"user_{request.user.id}")
+            cache_key = f"user_{request.user.id}"
+            notes_data = self.redis.get(cache_key)
+            if notes_data:
+                notes_data = json.loads(notes_data) 
+                notes_data = [
+                    note for note in notes_data if note['id'] != int(pk)]
+
+                self.redis.save(cache_key, json.dumps(notes_data))
 
             return Response({
                     'message': 'successfully deleted',

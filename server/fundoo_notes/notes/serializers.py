@@ -6,3 +6,4 @@ class SerializerNote(serializers.ModelSerializer):
         model=Note
         fields='__all__'
         read_only_fields=['user']
+

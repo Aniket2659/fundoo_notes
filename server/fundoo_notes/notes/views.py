@@ -164,51 +164,52 @@ class NotesViewSet(viewsets.ModelViewSet):
             )
     @swagger_auto_schema(operation_description="Updation of note", request_body=SerializerNote, responses={201: SerializerNote, 400: "Bad Request: Invalid input data.",
                                                                                                            500: "Internal Server Error: An error occurred during updating note."})
-    def update(self, request, pk=None):
+    def update(self, request, pk=None, *args, **kwargs):
         """
-        Update an existing note for the user.
-        Parameters: request (Request) - HTTP request, pk (int) - Note ID.
-        Returns: Serialized updated note data or error message.
+        Update a specific note by its ID.
         """
         try:
-            note = Note.objects.filter(
-                Q(pk=pk) & 
-                (Q(user=request.user) | Q(collaborators_relation__user=request.user , collaborators_relation__access_type=Collaborator.READ_WRITE))
-            ).distinct().first()
-
-            serializer = SerializerNote(note, data=request.data)
+            instance = Note.objects.get(id=pk)
+            if instance.user.id == request.user.id:
+                data = request.data.copy()
+                data['user'] = request.user.id
+                
+            else:
+                collabrator = instance.collaborators_set.filter(user_id=request.user.id).first()
+                
+                if collabrator is None:
+                    return Response({"Message":"You are not collaborator of this note",
+                                     "satus":"Error"},status=status.HTTP_403_FORBIDDEN)
+                
+                if collabrator.access_type == "read_only":
+                    return Response({"Message":"You only have read_only permission on this note",
+                                     "satus":"Error"},status=status.HTTP_403_FORBIDDEN)
+                    
+                data = request.data.copy()
+                data.pop('user',None)    
+                        
+            serializer = self.get_serializer(instance, data=request.data, partial=False)
             serializer.is_valid(raise_exception=True)
-            note=serializer.save()
-
-            if note.reminder:
-                schedule_reminder(note)
-
+            self.perform_update(serializer)
+            # self.sechdule_reminder(pk)
+            if serializer.instance.reminder:
+                self.sechdule_reminder(serializer.instance,request.data['reminder'])
+            note_cache_key = f"user_{request.user.id}_note_{pk}"
+            self.redis.save(note_cache_key,serializer.data,ex=300)
             cache_key = f"user_{request.user.id}"
-            notes_data = self.redis.get(cache_key)
-            if notes_data:
-                notes_data = json.loads(notes_data) 
-                for idx, existing_note in enumerate(notes_data):
-                    if existing_note['id'] == int(pk):  
-                        notes_data[idx] = serializer.data
-                        break
-
-                self.redis.save(cache_key, json.dumps(notes_data))
-
-            return Response({
-                    'message': 'successfully updated',
-                    'status': 'success',
-                    'data':serializer.data})
+            queryset = self.get_queryset()
+            self.redis.save(cache_key,self.get_serializer(queryset,many=True).data,ex=300)
+            return Response({"Message":"The note is updated",
+                             "satus":"Sucess",
+                             "data":serializer.data},status=status.HTTP_200_OK)
+            
         except Exception as e:
-            logger.error(f"Unexpected error while updating note: {e}")
+            logger.error(f"Error updating note with ID {pk}: {str(e)}")
+            return Response({
+                'error': 'An error occurred while updating the note.',
+                'detail': str(e)
+            }, status=status.HTTP_400_BAD_REQUEST)
 
-            return Response(
-                {
-                    'message': 'An unexpected error occurred',
-                    'status': 'error',
-                    'errors': str(e)
-                },
-                status=status.HTTP_400_BAD_REQUEST
-            )
     @swagger_auto_schema(operation_description="Deletion of note", request_body=SerializerNote, responses={201: SerializerNote, 400: "Bad Request: Invalid input data.",
                                                                                                            500: "Internal Server Error: An error occurred during deleting note."})
 

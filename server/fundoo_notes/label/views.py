@@ -5,6 +5,9 @@ from rest_framework_simplejwt.authentication import JWTAuthentication
 from django.core.exceptions import ObjectDoesNotExist, ValidationError
 from django.db import DatabaseError
 from loguru import logger
+from django.http import Http404
+from rest_framework.exceptions import ValidationError
+
 
 from .models import Label
 from .serializers import LabelSerializer
@@ -70,7 +73,7 @@ class LabelViewSet(mixins.CreateModelMixin,
             return Response({
                 'message': 'Validation error',
                 'status': 'error',
-                'errors': e.message_dict
+                'errors': e.detail
             }, status=status.HTTP_400_BAD_REQUEST)
         except DatabaseError as e:
             logger.error(f"Database error: {e}")
@@ -100,19 +103,25 @@ class LabelViewSet(mixins.CreateModelMixin,
         """
         try:
             instance = self.get_object()
+            if instance.user != request.user:
+                return Response({
+                'message': 'Permission denied',
+                'status': 'error',
+                'errors': 'You do not have permission to view this label'
+            }, status=status.HTTP_403_FORBIDDEN)
             serializer = self.get_serializer(instance)
             return Response({
                 'message': 'Label retrieved successfully',
                 'status': 'success',
                 'data': serializer.data
             })
-        except ObjectDoesNotExist as e:
+        except Http404 as e:
             logger.warning(f"Label not found: {e}")
             return Response({
-                'message': 'Label not found',
-                'status': 'error',
-                'errors': str(e)
-            }, status=status.HTTP_404_NOT_FOUND)
+            'message': 'Label not found',
+            'status': 'error',
+            'errors': str(e)
+        }, status=status.HTTP_404_NOT_FOUND)
         except Exception as e:
             logger.error(f"Unexpected error: {e}")
             return Response({
@@ -157,15 +166,15 @@ class LabelViewSet(mixins.CreateModelMixin,
             return Response({
                 'message': 'Validation error',
                 'status': 'error',
-                'errors': e.message_dict
+                'errors': e.detail
             }, status=status.HTTP_400_BAD_REQUEST)
-        except ObjectDoesNotExist as e:
+        except Http404 as e:
             logger.warning(f"Label not found: {e}")
             return Response({
-                'message': 'Label not found',
-                'status': 'error',
-                'errors': str(e)
-            }, status=status.HTTP_404_NOT_FOUND)
+            'message': 'Label not found',
+            'status': 'error',
+            'errors': str(e)
+        }, status=status.HTTP_404_NOT_FOUND)
         except Exception as e:
             logger.error(f"Unexpected error: {e}")
             return Response({
@@ -192,13 +201,13 @@ class LabelViewSet(mixins.CreateModelMixin,
                 'message': 'Label deleted successfully',
                 'status': 'success'
             }, status=status.HTTP_204_NO_CONTENT)
-        except ObjectDoesNotExist as e:
+        except Http404 as e:
             logger.warning(f"Label not found: {e}")
             return Response({
-                'message': 'Label not found',
-                'status': 'error',
-                'errors': str(e)
-            }, status=status.HTTP_404_NOT_FOUND)
+            'message': 'Label not found',
+            'status': 'error',
+            'errors': str(e)
+        }, status=status.HTTP_404_NOT_FOUND)
         except Exception as e:
             logger.error(f"Unexpected error: {e}")
             return Response({

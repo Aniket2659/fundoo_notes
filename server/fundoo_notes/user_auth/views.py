@@ -77,7 +77,7 @@ class RegisterUserView(APIView):
                 'message': 'An unexpected error occurred',
                 'status': 'error',
                 'error': str(e)
-            }, status=status.HTTP_400_BAD_REQUEST)
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
 class LoginUserView(APIView):
@@ -178,8 +178,3 @@ def verify_registered_user(request, token):
             'error': str(e)
         }, status=status.HTTP_400_BAD_REQUEST)
 
-#middleware testing
-from django.http import JsonResponse
-
-def test_view(request):
-    return JsonResponse({"message": "Hello, World!"})

@@ -1,6 +1,6 @@
 
 from django.urls import path
-from .views import RegisterUserView,LoginUserView,verify_registered_user
+from .views import RegisterUserView,LoginUserView,verify_registered_user,signin, signup, home
 
 
 urlpatterns = [

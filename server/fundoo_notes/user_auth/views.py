@@ -14,6 +14,10 @@ from rest_framework.permissions import AllowAny
 from .tasks import send_verification_email
 from django.utils.html import format_html
 from drf_yasg.utils import swagger_auto_schema
+from django.shortcuts import redirect, render
+from django.contrib.auth import authenticate, login
+from loguru import logger
+from django.contrib import messages
 
 
 class RegisterUserView(APIView):
@@ -112,13 +116,14 @@ class LoginUserView(APIView):
             and corresponding status code.
         """
         try:
-            serializer = UserLoginSerializer(data=request.data)
+            serializer = UserLoginSerializer(data=request.data,context={'request': request})
             serializer.is_valid(raise_exception=True)
-            serializer.save()
+            response=serializer.save()
             return Response({
                 'message': 'User login successful',
                 'status': 'success',
-                'data': serializer.data
+                'data': response['data'],  
+                'tokens': response['tokens']  
             }, status=status.HTTP_200_OK)
         except ValidationError as e:
             return Response({
@@ -177,4 +182,58 @@ def verify_registered_user(request, token):
             'status': 'error',
             'error': str(e)
         }, status=status.HTTP_400_BAD_REQUEST)
+    
 
+def signup(request):
+    if request.method == 'POST':
+        username = request.POST['username']
+        email = request.POST['email']
+        password1 = request.POST['password1']
+        password2 = request.POST['password2']
+
+        if password1 != password2:
+            messages.error(request, 'Passwords do not match.')
+            return render(request, 'signup.html')
+
+        if User.objects.filter(email=email).exists():
+            messages.error(request, 'Email is already taken.')
+            return render(request, 'signup.html')
+
+        user = User.objects.create_user(
+            username=username, email=email, password=password1)
+        user.is_active = False 
+        user.save()
+
+        verification_link = request.build_absolute_uri(
+            reverse('verify', args=[user.id]))
+        send_verification_email.delay(user.email, verification_link)
+
+        messages.success(
+            request, 'Account created successfully! Please check your email to verify your account.')
+        return redirect('signin')
+
+    return render(request, 'signup.html')
+
+
+def signin(request):
+    if request.method == 'POST':
+        email = request.POST['email']
+        password = request.POST['password']
+        print(email,password)
+        
+        user=User.objects.filter(email=email)
+        
+        if user.exists():
+                user=user.first()
+                user.check_password(password)
+                login(request, user)
+                messages.success(request, 'Login successful! Welcome back.')
+                return redirect('home')
+        else:
+            messages.error(request, 'Invalid email or password.')
+            return render(request, 'signin.html')
+
+    return render(request, 'signin.html')
+
+def home(request):
+    return render(request, 'home.html', {'user': request.user})

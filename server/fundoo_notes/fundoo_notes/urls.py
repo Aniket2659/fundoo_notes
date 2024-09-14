@@ -19,6 +19,7 @@ from django.urls import path,include
 from rest_framework import permissions
 from drf_yasg.views import get_schema_view
 from drf_yasg import openapi
+from user_auth.views import home, signin, signup
 
 schema_view = get_schema_view(
    openapi.Info(
@@ -38,7 +39,10 @@ urlpatterns = [
     path('user/',include('user_auth.urls')),
     path('note/',include('notes.urls')),
     path('label/',include('label.urls')),
-   path('swagger/', schema_view.with_ui('swagger', cache_timeout=0), name='schema-swagger-ui')
+    path('swagger/', schema_view.with_ui('swagger', cache_timeout=0), name='schema-swagger-ui'),
+    path('signup/', signup, name='signup'),
+    path('signin/', signin, name='signin'),
+    path('home/', home, name='home'),
     
 ]
 
